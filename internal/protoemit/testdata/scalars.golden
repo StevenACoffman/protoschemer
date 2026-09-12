@@ -1,0 +1,20 @@
+// === example/v1/scalars.proto ===
+// Code generated. DO NOT EDIT.
+syntax = "proto3";
+package example.v1;
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
+option go_package = "example.com/gen/example/v1";
+// Every scalar shape.
+message Scalars {
+  // A required string.
+  string name = 1;
+  optional int32 count = 2;
+  double ratio = 3;
+  optional bool enabled = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  google.type.Date born_on = 6;
+  google.protobuf.Struct metadata = 7;
+  repeated string tags = 8;
+}

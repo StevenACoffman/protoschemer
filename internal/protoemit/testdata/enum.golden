@@ -1,0 +1,14 @@
+// === example/v1/enum.proto ===
+syntax = "proto3";
+package example.v1;
+message Thing {
+  Status status = 1;
+}
+// Lifecycle status.
+enum Status {
+  // Unset, or the value 'unknown'.
+  STATUS_UNSPECIFIED = 0;
+  // In use.
+  STATUS_ACTIVE = 1;
+  STATUS_TO_BE_DELETED = 2;
+}

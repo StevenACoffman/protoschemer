@@ -1,0 +1,18 @@
+// === example/v1/org.proto ===
+syntax = "proto3";
+package example.v1;
+message Org {
+  string sourced_id = 1;
+}
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_ADMIN = 1;
+}
+// === example/v1/user.proto ===
+syntax = "proto3";
+package example.v1;
+import "example/v1/org.proto";
+message User {
+  Org org = 1;
+  repeated Role roles = 2;
+}

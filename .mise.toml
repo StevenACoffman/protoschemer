@@ -1,6 +1,6 @@
 [tools]
 go = "latest"
-golangci-lint = "latest"
+golangci-lint = "v2.13.2"
 goreleaser = "latest"
 "github:gotestyourself/gotestsum" = "latest"
 # supply-chain tooling: syft generates the SBOM, cosign signs the checksum.

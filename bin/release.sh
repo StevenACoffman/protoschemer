@@ -11,7 +11,7 @@ set -euo pipefail
 #     not diverged)
 #   - the tag does not already exist
 ORG="StevenACoffman"
-REPO="invigilator"
+REPO="protoschemer"
 if [ $# -ne 1 ]; then
     echo "usage: ./bin/release.sh vX.Y.Z" >&2
     exit 1

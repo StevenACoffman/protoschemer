@@ -9,7 +9,7 @@ require (
 	github.com/jhump/protoreflect/v2 v2.0.0-beta.2
 	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	github.com/sudorandom/protoc-gen-connect-openapi v0.27.1
+	github.com/sudorandom/protoc-gen-connect-openapi v0.27.2
 	github.com/swaggest/jsonschema-go v0.3.79
 	google.golang.org/genproto v0.0.0-20260911204522-f61a6ca850bd
 	google.golang.org/protobuf v1.36.12
@@ -39,5 +39,3 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260904194346-d0f1323225a4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260904194346-d0f1323225a4 // indirect
 )
-
-replace github.com/sudorandom/protoc-gen-connect-openapi => github.com/StevenACoffman/protoc-gen-connect-openapi v0.0.0-20260912190720-3481e7ca1ce6

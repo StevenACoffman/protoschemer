@@ -86,7 +86,7 @@ Type mapping:
   format: date               google.type.Date
   enum ["true","false"]      bool
   additionalProperties only  google.protobuf.Struct
-  anyOf[enum, "ext:" ...]    an enum plus a <field>_ext string escape hatch
+  anyOf[enum, "ext:" ...]    string, annotated with the original alternatives
 
 A document's root schema becomes a message only when --name-map supplies a name
 for it; otherwise the document contributes just its definitions.`,
@@ -99,7 +99,7 @@ for it; otherwise the document contributes just its definitions.`,
 
 // exec reads the schemas, converts them, and writes the result. The work in
 // between is pure, so this function stays a flat sequence of I/O.
-func (cfg *Config) exec(_ context.Context, _ []string) error {
+func (cfg *Config) exec(ctx context.Context, _ []string) error {
 	opts, err := jsonschema.NewOptions(
 		cfg.Package, cfg.GoPackage, cfg.ImportPrefix, cfg.StripSuffix, cfg.Header)
 	if err != nil {
@@ -123,7 +123,7 @@ func (cfg *Config) exec(_ context.Context, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("jsonschema: %w", err)
 	}
-	sources, err := protoemit.Render(files)
+	sources, err := protoemit.Render(ctx, files)
 	if err != nil {
 		return fmt.Errorf("jsonschema: %w", err)
 	}

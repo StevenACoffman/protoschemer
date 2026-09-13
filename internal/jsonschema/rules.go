@@ -184,3 +184,18 @@ func stringify(v any) string {
 		return fmt.Sprint(t)
 	}
 }
+
+// extPattern returns the regular expression that admits values outside an
+// extensible enumeration's vocabulary.
+func extPattern(s *schemalib.Schema) (string, bool) {
+	for _, branch := range s.AnyOf {
+		b := branch.TypeObject
+		if b == nil || b.Pattern == nil {
+			continue
+		}
+		if strings.Contains(*b.Pattern, extMarker) {
+			return *b.Pattern, true
+		}
+	}
+	return "", false
+}

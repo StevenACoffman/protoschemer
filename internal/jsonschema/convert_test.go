@@ -1,6 +1,7 @@
 package jsonschema_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -62,48 +63,48 @@ func TestConvertRules(t *testing.T) {
 
 	cases := map[string]struct {
 		schema string
-		want   string
+		want   []string
 	}{
 		"date-time becomes Timestamp": {
 			schema: `{"properties":{"dateLastModified":{"type":"string","format":"date-time"}},
 			          "required":["dateLastModified"]}`,
-			want: "  google.protobuf.Timestamp date_last_modified = 1;\n",
+			want: []string{"  google.protobuf.Timestamp date_last_modified = 1"},
 		},
 		"date becomes google.type.Date": {
 			schema: `{"properties":{"birthDate":{"type":"string","format":"date"}},
 			          "required":["birthDate"]}`,
-			want: "  google.type.Date birth_date = 1;\n",
+			want: []string{"  google.type.Date birth_date = 1"},
 		},
 		"string enum of true/false becomes bool": {
 			schema: `{"properties":{"asian":{"type":"string","enum":["true","false"]}}}`,
-			want:   "  optional bool asian = 1;\n",
+			want:   []string{"  optional bool asian = 1"},
 		},
 		"required field has no presence wrapper": {
 			schema: `{"properties":{"sourcedId":{"type":"string"}},"required":["sourcedId"]}`,
-			want:   "  string sourced_id = 1;\n",
+			want:   []string{"  string sourced_id = 1"},
 		},
 		"optional scalar gets presence": {
 			schema: `{"properties":{"email":{"type":"string"}}}`,
-			want:   "  optional string email = 1;\n",
+			want:   []string{"  optional string email = 1;\n"},
 		},
 		"free-form object becomes Struct": {
 			schema: `{"properties":{"metadata":{"type":"object","additionalProperties":true}}}`,
-			want:   "  google.protobuf.Struct metadata = 1;\n",
+			want:   []string{"  google.protobuf.Struct metadata = 1;\n"},
 		},
 		"integer becomes int32 and number becomes double": {
 			schema: `{"properties":{"count":{"type":"integer"},"ratio":{"type":"number"}},
 			          "required":["count","ratio"]}`,
-			want: "  int32 count = 1;\n  double ratio = 2;\n",
+			want: []string{"  int32 count = 1", "  double ratio = 2"},
 		},
 		"array of strings becomes repeated": {
 			schema: `{"properties":{"grades":{"type":"array","items":{"type":"string"}}}}`,
-			want:   "  repeated string grades = 1;\n",
+			want:   []string{"  repeated string grades = 1;\n"},
 		},
-		"extensible enum yields an enum plus a string escape hatch": {
+		"extensible enum becomes a string carrying both alternatives": {
 			schema: `{"properties":{"sex":{"anyOf":[
 			            {"type":"string","enum":["male","female","other"]},
 			            {"type":"string","pattern":"(ext:)[a-z]+"}]}}}`,
-			want: "  RootSex sex = 1;\n",
+			want: []string{"  optional string sex = 1"},
 		},
 	}
 
@@ -115,13 +116,15 @@ func TestConvertRules(t *testing.T) {
 			}}, options(t))
 			ok(t, err)
 
-			out, err := protoemit.Render(files)
+			out, err := protoemit.Render(context.Background(), files)
 			ok(t, err)
 			if len(out) != 1 {
 				t.Fatalf("expected 1 file, got %d", len(out))
 			}
-			if !strings.Contains(out[0].Source, tc.want) {
-				t.Fatalf("missing expected fields\nwant:\n%s\ngot:\n%s", tc.want, out[0].Source)
+			for _, want := range tc.want {
+				if !strings.Contains(out[0].Source, want) {
+					t.Fatalf("missing %q\ngot:\n%s", want, out[0].Source)
+				}
 			}
 		})
 	}
@@ -141,23 +144,35 @@ func TestConvertExtensibleEnum(t *testing.T) {
 	}}, options(t))
 	ok(t, err)
 
-	out, err := protoemit.Render(files)
+	out, err := protoemit.Render(context.Background(), files)
 	ok(t, err)
 
 	want := `syntax = "proto3";
 package example.v1;
+import "gnostic/openapi/v3/annotations.proto";
 option go_package = "example.com/gen";
 message Demographics {
-  DemographicsSex sex = 1;
-  // Set instead of sex when the value falls outside the enumeration above.
-  optional string sex_ext = 2;
-}
-enum DemographicsSex {
-  // Unset, or the schema value 'unspecified'.
-  DEMOGRAPHICS_SEX_UNSPECIFIED = 0;
-  DEMOGRAPHICS_SEX_MALE = 1;
-  DEMOGRAPHICS_SEX_FEMALE = 2;
-  DEMOGRAPHICS_SEX_OTHER = 3;
+  optional string sex = 1 [
+    (gnostic.openapi.v3.property) = {
+      type: "string",
+      any_of: [
+        {
+          schema: {
+            enum: [
+              { yaml: "\"male\"" },
+              { yaml: "\"female\"" },
+              { yaml: "\"unspecified\"" },
+              { yaml: "\"other\"" }
+            ],
+            type: "string"
+          }
+        },
+        {
+          schema: { pattern: "(ext:)[a-zA-Z0-9]+", type: "string" }
+        }
+      ]
+    }
+  ];
 }
 `
 	equals(t, want, out[0].Source)
@@ -192,7 +207,7 @@ func TestConvertPoolsDefinitions(t *testing.T) {
 	org := find(t, files, "gen/v1/org.proto")
 	equals(t, "Org", org.Messages[0].Name)
 
-	out, err := protoemit.Render(files)
+	out, err := protoemit.Render(context.Background(), files)
 	ok(t, err)
 	if !strings.Contains(out[0].Source, "  google.protobuf.Struct metadata = 1;\n") {
 		t.Fatalf("free-form $ref did not become Struct:\n%s", out[0].Source)

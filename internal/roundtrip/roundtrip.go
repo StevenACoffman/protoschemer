@@ -26,6 +26,7 @@ import (
 	_ "google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/pluginpb"
 
+	"github.com/StevenACoffman/protoschemer/internal/protoemit/gnosticdefs"
 	"github.com/StevenACoffman/protoschemer/internal/protoir"
 )
 
@@ -207,6 +208,16 @@ func compile(files []protoir.SourceFile) ([]protoreflect.FileDescriptor, error) 
 				}
 				return protocompile.SearchResult{Source: strings.NewReader(src)}, nil
 			}),
+			// Emitted files import the annotation schema, which protoemit
+			// embeds rather than registering globally; serve it from the same
+			// source so what we compile is what a caller would compile.
+			protocompile.ResolverFunc(func(p string) (protocompile.SearchResult, error) {
+				file, err := gnosticdefs.FS.Open(p)
+				if err != nil {
+					return protocompile.SearchResult{}, protoregistry.NotFound
+				}
+				return protocompile.SearchResult{Source: file}, nil
+			}),
 			protocompile.ResolverFunc(func(p string) (protocompile.SearchResult, error) {
 				fd, err := protoregistry.GlobalFiles.FindFileByPath(p)
 				if err != nil {
@@ -238,6 +249,7 @@ func convert(fds []protoreflect.FileDescriptor) ([]byte, error) {
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	seen := make(map[string]bool)
 
+	var walkErr error
 	var walk func(fd protoreflect.FileDescriptor)
 	walk = func(fd protoreflect.FileDescriptor) {
 		if seen[fd.Path()] {
@@ -248,12 +260,20 @@ func convert(fds []protoreflect.FileDescriptor) ([]byte, error) {
 		for i := range imports.Len() {
 			walk(imports.Get(i).FileDescriptor)
 		}
-		protoFiles = append(protoFiles, protodesc.ToFileDescriptorProto(fd))
+		fdp, convErr := withConcreteOptions(protodesc.ToFileDescriptorProto(fd))
+		if convErr != nil {
+			walkErr = convErr
+			return
+		}
+		protoFiles = append(protoFiles, fdp)
 	}
 
 	toGenerate := make([]string, 0, len(fds))
 	for _, fd := range fds {
 		walk(fd)
+		if walkErr != nil {
+			return nil, walkErr
+		}
 		toGenerate = append(toGenerate, fd.Path())
 	}
 
@@ -273,4 +293,27 @@ func convert(fds []protoreflect.FileDescriptor) ([]byte, error) {
 			"expected 1 schema document, got %d", len(resp.GetFile()))
 	}
 	return []byte(resp.GetFile()[0].GetContent()), nil
+}
+
+// withConcreteOptions re-parses a descriptor's options against the global type
+// registry.
+//
+// protocompile resolves custom options to dynamicpb values, but the converter
+// reads them through the generated Go type and panics on anything else. Passing
+// the bytes through the registry is what protoc itself does when it hands a
+// descriptor to a plugin, and it resolves the gnostic extension by field number
+// regardless of which package published it.
+func withConcreteOptions(fdp *descriptorpb.FileDescriptorProto) (
+	*descriptorpb.FileDescriptorProto, error,
+) {
+	encoded, err := proto.Marshal(fdp)
+	if err != nil {
+		return nil, protoir.Errorf(protoir.EINTERNAL, "marshal %s: %s", fdp.GetName(), err)
+	}
+	concrete := &descriptorpb.FileDescriptorProto{}
+	unmarshal := proto.UnmarshalOptions{Resolver: protoregistry.GlobalTypes}
+	if err := unmarshal.Unmarshal(encoded, concrete); err != nil {
+		return nil, protoir.Errorf(protoir.EINTERNAL, "reparse %s: %s", fdp.GetName(), err)
+	}
+	return concrete, nil
 }

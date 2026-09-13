@@ -1,6 +1,7 @@
 package roundtrip_test
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"os"
@@ -125,7 +126,7 @@ func TestCorpusRoundTrips(t *testing.T) {
 	files, err := jsonschema.Convert([]jsonschema.Document{{Schema: source}}, opts)
 	ok(t, err)
 
-	sources, err := protoemit.Render(files)
+	sources, err := protoemit.Render(context.Background(), files)
 	ok(t, err)
 
 	recovered, err := roundtrip.Through(sources)

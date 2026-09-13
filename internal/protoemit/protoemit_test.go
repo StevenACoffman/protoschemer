@@ -1,6 +1,7 @@
 package protoemit_test
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -198,7 +199,7 @@ func TestRender(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			out, err := protoemit.Render(tc.files)
+			out, err := protoemit.Render(context.Background(), tc.files)
 			ok(t, err)
 
 			var combined strings.Builder
@@ -264,7 +265,7 @@ func TestRenderRejects(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := protoemit.Render(tc.files)
+			_, err := protoemit.Render(context.Background(), tc.files)
 			if err == nil {
 				t.Fatal("expected an error, got nil")
 			}

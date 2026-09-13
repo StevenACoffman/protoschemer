@@ -92,24 +92,42 @@ func TestJSONSchemaCommand(t *testing.T) {
 	ok(t, err)
 	want := `syntax = "proto3";
 package oneroster.v1p2.v1;
+import "buf/validate/validate.proto";
+import "gnostic/openapi/v3/annotations.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 option go_package = "example.com/gen/oneroster/v1p2/v1";
 // An organization.
 message Org {
-  optional bool active = 1;
-  google.protobuf.Timestamp date_last_modified = 2;
+  optional bool active = 1 [
+    (gnostic.openapi.v3.property) = {
+      enum: [ { yaml: "\"true\"" }, { yaml: "\"false\"" } ],
+      type: "string"
+    }
+  ];
+  google.protobuf.Timestamp date_last_modified = 2 [(buf.validate.field) = { required: true }];
   google.protobuf.Struct metadata = 3;
   // The identifier.
-  string sourced_id = 4;
-  OrgType type = 5;
-  // Set instead of type when the value falls outside the enumeration above.
-  optional string type_ext = 6;
-}
-enum OrgType {
-  ORG_TYPE_UNSPECIFIED = 0;
-  ORG_TYPE_SCHOOL = 1;
-  ORG_TYPE_DISTRICT = 2;
+  string sourced_id = 4 [(buf.validate.field) = { required: true }];
+  optional string type = 5 [
+    (gnostic.openapi.v3.property) = {
+      type: "string",
+      any_of: [
+        {
+          schema: {
+            enum: [
+              { yaml: "\"school\"" },
+              { yaml: "\"district\"" }
+            ],
+            type: "string"
+          }
+        },
+        {
+          schema: { pattern: "(ext:)[a-z]+", type: "string" }
+        }
+      ]
+    }
+  ];
 }
 `
 	if string(org) != want {

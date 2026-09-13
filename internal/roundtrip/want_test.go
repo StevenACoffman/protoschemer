@@ -90,28 +90,12 @@ func hasAdditionalProperties() func(map[string]any) error {
 	}
 }
 
-// hasProperties checks that an object declares the named members.
-func hasProperties(want ...string) func(map[string]any) error {
-	return func(got map[string]any) error {
-		props, ok := got["properties"].(map[string]any)
-		if !ok {
-			return fmt.Errorf("properties: missing (have %v)", keysOf(got))
-		}
-		for _, name := range want {
-			if _, found := props[name]; !found {
-				return fmt.Errorf("properties: missing %q (have %v)", name, keysOf(props))
-			}
-		}
-		return nil
-	}
-}
-
-// hasEnumSuffixes checks the enum members by suffix.
+// hasEnumValues checks the enum members exactly.
 //
-// Suffix rather than exact match because protobuf requires every value to carry
-// its enum's name as a prefix, so the prefix is a naming artifact while the
-// suffix is the value the source schema actually named.
-func hasEnumSuffixes(want ...string) func(map[string]any) error {
+// Exact rather than by suffix: protoschemer annotates the field with the source
+// vocabulary, so a recovered value that merely ends in the right word would
+// mean the annotation was dropped and the generated names leaked through.
+func hasEnumValues(want ...string) func(map[string]any) error {
 	return func(got map[string]any) error {
 		raw, ok := got["enum"].([]any)
 		if !ok {
@@ -123,9 +107,9 @@ func hasEnumSuffixes(want ...string) func(map[string]any) error {
 				values = append(values, s)
 			}
 		}
-		for _, suffix := range want {
-			if !anyHasSuffix(values, "_"+suffix) {
-				return fmt.Errorf("enum: no value ending in %q (got %v)", suffix, values)
+		for _, member := range want {
+			if !slices.Contains(values, member) {
+				return fmt.Errorf("enum: missing %q (got %v)", member, values)
 			}
 		}
 		return nil
@@ -172,11 +156,43 @@ func keysOf(m map[string]any) []string {
 	return keys
 }
 
-func anyHasSuffix(values []string, suffix string) bool {
-	for _, v := range values {
-		if strings.HasSuffix(v, suffix) {
-			return true
+// hasAnyOfBranches checks that a union kept both of its alternatives.
+//
+// The branches are matched by content rather than by position or count: a
+// partial implementation would most likely keep the vocabulary and drop the
+// escape hatch, which is the branch the whole construct exists for.
+func hasAnyOfBranches(vocabulary []string, escape string) func(map[string]any) error {
+	return func(got map[string]any) error {
+		branches, ok := got["anyOf"].([]any)
+		if !ok {
+			return fmt.Errorf("anyOf: missing (have %v)", keysOf(got))
+		}
+		sawVocabulary, sawEscape := scanBranches(branches, vocabulary, escape)
+		if !sawVocabulary {
+			return fmt.Errorf("anyOf: no branch carrying %v", vocabulary)
+		}
+		if !sawEscape {
+			return fmt.Errorf("anyOf: no branch whose pattern admits %q", escape)
+		}
+		return nil
+	}
+}
+
+// scanBranches reports which of the two expected alternatives are present.
+func scanBranches(branches []any, vocabulary []string, escape string) (vocab, esc bool) {
+	carriesVocabulary := hasEnumValues(vocabulary...)
+	for _, raw := range branches {
+		branch, isMap := raw.(map[string]any)
+		if !isMap {
+			continue
+		}
+		if carriesVocabulary(branch) == nil {
+			vocab = true
+		}
+		if pattern, isText := branch["pattern"].(string); isText &&
+			strings.Contains(pattern, escape) {
+			esc = true
 		}
 	}
-	return false
+	return vocab, esc
 }

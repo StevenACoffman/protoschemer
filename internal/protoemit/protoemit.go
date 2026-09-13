@@ -9,6 +9,7 @@
 package protoemit
 
 import (
+	"context"
 	"sort"
 
 	"github.com/jhump/protoreflect/v2/protobuilder"
@@ -28,7 +29,7 @@ import (
 // Ensures: one SourceFile per input File, ordered by Path; each Source is
 // proto3 that compiles against the others, with imports derived from actual
 // cross-file references rather than declared by the caller.
-func Render(files []protoir.File) ([]protoir.SourceFile, error) {
+func Render(ctx context.Context, files []protoir.File) ([]protoir.SourceFile, error) {
 	const op = "protoemit.Render"
 
 	index, err := symbolIndex(files)
@@ -40,13 +41,18 @@ func Render(files []protoir.File) ([]protoir.SourceFile, error) {
 		return nil, protoir.Wrap(op, err)
 	}
 
+	notes, err := newAnnotator(ctx)
+	if err != nil {
+		return nil, protoir.Wrap(op, err)
+	}
+
 	built := make(map[string]protoreflect.FileDescriptor, len(ordered))
 	rendered := make([]protoir.SourceFile, 0, len(ordered))
 	printer := protoprint.Printer{Compact: true}
 
 	for i := range ordered {
 		file := &ordered[i]
-		fd, buildErr := buildFile(file, index, built)
+		fd, buildErr := buildFile(file, index, built, notes)
 		if buildErr != nil {
 			return nil, protoir.Wrap(op, buildErr)
 		}
@@ -96,6 +102,7 @@ func buildFile(
 	file *protoir.File,
 	index map[string]string,
 	built map[string]protoreflect.FileDescriptor,
+	notes *annotator,
 ) (protoreflect.FileDescriptor, error) {
 	fb := protobuilder.NewFile(file.Path).SetPackageName(protoreflect.FullName(file.Package))
 	fb.Syntax = protoreflect.Proto3
@@ -127,7 +134,7 @@ func buildFile(
 		fb.AddMessage(mb)
 	}
 
-	if err := addFields(file, res); err != nil {
+	if err := addFields(file, res, notes); err != nil {
 		return nil, err
 	}
 
@@ -139,29 +146,57 @@ func buildFile(
 }
 
 // addFields populates every message in file, now that all declarations exist.
-func addFields(file *protoir.File, res *resolver) error {
+func addFields(file *protoir.File, res *resolver, notes *annotator) error {
 	for _, m := range file.Messages {
 		mb := res.messages[m.Name]
-		for _, f := range m.Fields {
-			ft, err := res.fieldType(f.Type)
+		for i := range m.Fields {
+			f := &m.Fields[i]
+			fldb, err := buildField(f, res, notes)
 			if err != nil {
 				return protoir.Wrap(m.Name+"."+f.Name, err)
-			}
-			fldb := protobuilder.NewField(protoreflect.Name(f.Name), ft).
-				SetNumber(protoreflect.FieldNumber(f.Number))
-			if f.Comment != "" {
-				fldb.SetComments(protobuilder.Comments{LeadingComment: comment(f.Comment)})
-			}
-			switch {
-			case f.Repeated:
-				fldb.SetRepeated()
-			case f.Optional:
-				fldb.SetProto3Optional(true)
 			}
 			mb.AddField(fldb)
 		}
 	}
 	return nil
+}
+
+// annotates reports whether a field carries any source fact worth recording as
+// a protobuf option.
+func annotates(f *protoir.Field) bool {
+	return f.SourceForm != nil || f.SourceRequired
+}
+
+// buildField constructs one field, including the annotation that records the
+// shape its source schema described.
+func buildField(
+	f *protoir.Field,
+	res *resolver,
+	notes *annotator,
+) (*protobuilder.FieldBuilder, error) {
+	ft, err := res.fieldType(f.Type)
+	if err != nil {
+		return nil, err
+	}
+	fldb := protobuilder.NewField(protoreflect.Name(f.Name), ft).
+		SetNumber(protoreflect.FieldNumber(f.Number))
+	if f.Comment != "" {
+		fldb.SetComments(protobuilder.Comments{LeadingComment: comment(f.Comment)})
+	}
+	switch {
+	case f.Repeated:
+		fldb.SetRepeated()
+	case f.Optional:
+		fldb.SetProto3Optional(true)
+	}
+	if annotates(f) {
+		opts, optErr := notes.fieldOptions(f)
+		if optErr != nil {
+			return nil, optErr
+		}
+		fldb.SetOptions(opts)
+	}
+	return fldb, nil
 }
 
 // buildEnum constructs an enum, synthesizing the zero value protobuf requires.

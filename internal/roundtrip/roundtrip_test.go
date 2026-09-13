@@ -1,12 +1,15 @@
 package roundtrip_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	jsonschemavalidator "github.com/santhosh-tekuri/jsonschema/v6"
 	schemalib "github.com/swaggest/jsonschema-go"
 
 	"github.com/StevenACoffman/protoschemer/internal/jsonschema"
@@ -50,7 +53,7 @@ func tripErr(schemaJSON string) (roundtrip.Document, error) {
 		return roundtrip.Document{}, fmt.Errorf("convert: %w", err)
 	}
 
-	sources, err := protoemit.Render(files)
+	sources, err := protoemit.Render(context.Background(), files)
 	if err != nil {
 		return roundtrip.Document{}, fmt.Errorf("render: %w", err)
 	}
@@ -122,31 +125,6 @@ func TestLossyAspectsAreDocumented(t *testing.T) {
 	}
 }
 
-// TestExtraProperties checks the one aspect that adds a field. An open
-// enumeration has no protobuf equivalent, so protoschemer splits it; if that
-// companion field ever stops being emitted, extension values are silently
-// dropped and nothing else would notice.
-func TestExtraProperties(t *testing.T) {
-	t.Parallel()
-
-	for _, a := range aspects() {
-		if len(a.ExtraProperties) == 0 {
-			continue
-		}
-		t.Run(a.Name, func(t *testing.T) {
-			t.Parallel()
-			doc := trip(t, schemaWith(&a))
-			qualified := protoPackage + "." + rootMessage
-			names := doc.PropertyNames(qualified)
-			for _, suffix := range a.ExtraProperties {
-				if !anyHasSuffix(names, suffix) {
-					t.Fatalf("expected a property ending in %q, got %v", suffix, names)
-				}
-			}
-		})
-	}
-}
-
 // TestAspectMatrix prints the fidelity of every aspect. It asserts nothing; it
 // exists so `go test -v -run TestAspectMatrix` answers "what survives?" without
 // anyone reading the table by hand.
@@ -174,11 +152,90 @@ func checkDocumented(a *Aspect) error {
 		if a.Loses != "" {
 			return fmt.Errorf("marked %s but claims to lose %q", a.Fidelity, a.Loses)
 		}
-		if len(a.ExtraProperties) > 0 {
-			return fmt.Errorf("marked %s but adds properties %v", a.Fidelity, a.ExtraProperties)
-		}
 		return nil
 	default:
 		return fmt.Errorf("unknown fidelity %d", a.Fidelity)
 	}
+}
+
+// TestOpenEnumAcceptsExtensions validates documents against the recovered
+// schema for an open enumeration.
+//
+// Shape alone cannot answer the question a consumer actually has: does a
+// provider-specific "ext:" value still validate? That escape hatch is the whole
+// reason the construct exists, and it is what a partial implementation drops.
+func TestOpenEnumAcceptsExtensions(t *testing.T) {
+	t.Parallel()
+
+	doc := trip(t, `{"type":"object","required":["role"],"properties":{"role":{"anyOf":[
+		{"type":"string","enum":["student","teacher"]},
+		{"type":"string","pattern":"(ext:)[a-zA-Z0-9_]+"}]}}}`)
+
+	schema := compileProperty(t, doc, protoPackage+"."+rootMessage, "role")
+
+	cases := map[string]struct {
+		value string
+		valid bool
+	}{
+		"vocabulary value":     {`"student"`, true},
+		"other vocabulary":     {`"teacher"`, true},
+		"extension value":      {`"ext:paraprofessional"`, true},
+		"non-conforming value": {`"bogus"`, false},
+		"wrong type":           {`123`, false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var instance any
+			ok(t, json.Unmarshal([]byte(tc.value), &instance))
+			err := schema.Validate(instance)
+			if tc.valid && err != nil {
+				t.Fatalf("%s should validate: %s", tc.value, err)
+			}
+			if !tc.valid && err == nil {
+				t.Fatalf("%s should not validate", tc.value)
+			}
+		})
+	}
+}
+
+// compileProperty builds a validator for one recovered property, carrying the
+// document's definitions so any $ref inside it still resolves.
+func compileProperty(
+	t *testing.T,
+	doc roundtrip.Document,
+	message, property string,
+) *jsonschemavalidator.Schema {
+	t.Helper()
+
+	prop, found := doc.Property(message, property)
+	if !found {
+		t.Fatalf("property %q not found on %q", property, message)
+	}
+	standalone := map[string]any{"$defs": rawDefs(t, doc)}
+	for k, v := range prop {
+		standalone[k] = v
+	}
+
+	encoded, err := json.Marshal(standalone)
+	ok(t, err)
+	parsed, err := jsonschemavalidator.UnmarshalJSON(bytes.NewReader(encoded))
+	ok(t, err)
+
+	compiler := jsonschemavalidator.NewCompiler()
+	ok(t, compiler.AddResource("schema.json", parsed))
+	schema, err := compiler.Compile("schema.json")
+	ok(t, err)
+	return schema
+}
+
+// rawDefs re-decodes the document's definitions as plain JSON values.
+func rawDefs(t *testing.T, doc roundtrip.Document) map[string]any {
+	t.Helper()
+	var parsed struct {
+		Defs map[string]any `json:"$defs"`
+	}
+	ok(t, json.Unmarshal(doc.Raw, &parsed))
+	return parsed.Defs
 }

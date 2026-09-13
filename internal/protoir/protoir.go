@@ -46,13 +46,52 @@ type FieldType struct {
 	Scalar Scalar
 }
 
+// SourceForm describes the JSON shape a field had in the source schema, for a
+// field whose protobuf type serializes differently.
+//
+// It records what the source said, not how to express it. Choosing a way to
+// carry that into generated documentation is the emitter's job, which keeps
+// this package free of any output dialect.
+//
+// A SourceForm documents the source contract, not the protobuf wire format.
+// Protobuf JSON serialization ignores it entirely, so it is only truthful when
+// something translates between the two at the edge.
+//
+// It describes one field and holds only the keywords needed to document that
+// field. It is deliberately not a general schema type: a reader that needs to
+// express more should narrow it to these terms rather than widen this struct,
+// which would end in a second implementation of JSON Schema living here.
+type SourceForm struct {
+	// Type is the source's JSON type, such as "string".
+	Type string
+	// Format is the source's format keyword, such as "date".
+	Format string
+	// Pattern is the source's regular expression constraint.
+	Pattern string
+	// Enum is the permitted values, spelled as the source spelled them.
+	Enum []string
+	// AnyOf holds alternative shapes, for a source that described a union. A
+	// value satisfying any one of them satisfies the field.
+	AnyOf []SourceForm
+}
+
 // Field is one field of a Message.
 type Field struct {
 	// Name is already in protobuf's lower_snake_case form.
 	Name string
 	// Comment is the leading comment, unwrapped and without a "//" prefix.
 	Comment string
-	Type    FieldType
+	// SourceForm is set when the protobuf type does not serialize the way the
+	// source schema described. Nil means the two already agree.
+	SourceForm *SourceForm
+	Type       FieldType
+	// SourceRequired records that the source schema listed this field among its
+	// parent's required members.
+	//
+	// Proto3 has no required, so this cannot be expressed as a field label. It
+	// is kept because a reader of the generated documentation still needs to
+	// know, and an emitter can carry it as a validation annotation.
+	SourceRequired bool
 	// Number is the field's wire tag; it must be unique within its Message.
 	Number int32
 	// Repeated and Optional are mutually exclusive: protobuf has no

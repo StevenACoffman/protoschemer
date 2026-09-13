@@ -152,11 +152,31 @@ func (c *converter) property(in propertyInput) (propertyOutput, error) {
 	}
 	ft := c.singularType(in.schema)
 	return propertyOutput{fields: []protoir.Field{{
-		Name:     fieldName(in.property),
-		Comment:  text(in.schema.Description),
-		Type:     ft,
-		Optional: !in.required && !ft.HasImplicitPresence(),
+		Name:           fieldName(in.property),
+		Comment:        text(in.schema.Description),
+		Type:           ft,
+		SourceForm:     sourceFormFor(ft, in.schema),
+		SourceRequired: in.required,
+		Optional:       !in.required && !ft.HasImplicitPresence(),
 	}}}, nil
+}
+
+// sourceFormFor records the shape a source schema declared, when the protobuf
+// type chosen for it serializes differently.
+//
+// Only google.type.Date differs: protojson renders it as {year,month,day}
+// while the source called it an ISO string. Timestamp already renders as the
+// RFC 3339 string that format: date-time described, and Struct already renders
+// as the free-form object, so neither needs recording.
+func sourceFormFor(ft protoir.FieldType, s *schemalib.Schema) *protoir.SourceForm {
+	if ft.Kind != protoir.KindScalar || ft.Scalar != protoir.ScalarDate {
+		return nil
+	}
+	form := &protoir.SourceForm{Type: "string", Format: "date"}
+	if s.Format != nil {
+		form.Format = *s.Format
+	}
+	return form
 }
 
 // singularType resolves a non-array, non-enum schema to a field type.
@@ -184,7 +204,8 @@ func (c *converter) arrayProperty(in propertyInput) propertyOutput {
 	items := itemSchema(in.schema)
 	if items == nil {
 		return repeatedField(fieldName(in.property), comment,
-			protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarString}, nil)
+			protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarString},
+			nil, in.required)
 	}
 
 	elem := in
@@ -193,9 +214,10 @@ func (c *converter) arrayProperty(in propertyInput) propertyOutput {
 		enum := c.buildEnum(elem, values)
 		return repeatedField(fieldName(in.property), comment,
 			protoir.FieldType{Kind: protoir.KindEnum, Ref: enum.Name},
-			[]protoir.Enum{enum})
+			[]protoir.Enum{enum}, in.required)
 	}
-	return repeatedField(fieldName(in.property), comment, c.singularType(items), nil)
+	return repeatedField(fieldName(in.property), comment,
+		c.singularType(items), nil, in.required)
 }
 
 // enumProperty converts a closed enumeration, collapsing the two-valued
@@ -204,47 +226,58 @@ func (c *converter) enumProperty(in propertyInput, values []string) propertyOutp
 	comment := text(in.schema.Description)
 	if isBoolEnum(values) {
 		return propertyOutput{fields: []protoir.Field{{
-			Name:     fieldName(in.property),
-			Comment:  comment,
-			Type:     protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarBool},
-			Optional: !in.required,
+			Name:    fieldName(in.property),
+			Comment: comment,
+			Type:    protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarBool},
+			// The source spelled this as two strings, and protojson renders a
+			// bool as a JSON boolean, so the original spelling is recorded.
+			SourceForm:     &protoir.SourceForm{Type: "string", Enum: values},
+			SourceRequired: in.required,
+			Optional:       !in.required,
 		}}}
 	}
 	enum := c.buildEnum(in, values)
 	return propertyOutput{
 		enums: []protoir.Enum{enum},
 		fields: []protoir.Field{{
-			Name:     fieldName(in.property),
-			Comment:  comment,
-			Type:     protoir.FieldType{Kind: protoir.KindEnum, Ref: enum.Name},
-			Optional: !in.required,
+			Name:    fieldName(in.property),
+			Comment: comment,
+			Type:    protoir.FieldType{Kind: protoir.KindEnum, Ref: enum.Name},
+			// Protobuf requires identifier-shaped, prefixed value names, so the
+			// source vocabulary is recorded to keep it documentable.
+			SourceForm:     &protoir.SourceForm{Type: "string", Enum: values},
+			SourceRequired: in.required,
+			Optional:       !in.required,
 		}},
 	}
 }
 
-// openEnumProperty converts an extensible enumeration into a closed enum plus a
-// string escape hatch, so a value outside the vocabulary survives conversion
-// instead of silently becoming the zero value.
+// openEnumProperty converts an extensible enumeration to a string.
+//
+// The source describes a fixed vocabulary together with an escape hatch for
+// values the publisher did not foresee. Protobuf enums are closed, so modelling
+// the vocabulary as one would need a second field to carry the extensions, and
+// a single source property would become two. A string keeps the property whole;
+// the annotation carries the vocabulary and the escape hatch for documentation.
 func (c *converter) openEnumProperty(in propertyInput, values []string) propertyOutput {
-	enum := c.buildEnum(in, values)
-	name := fieldName(in.property)
-	return propertyOutput{
-		enums: []protoir.Enum{enum},
-		fields: []protoir.Field{
-			{
-				Name:    name,
-				Comment: text(in.schema.Description),
-				Type:    protoir.FieldType{Kind: protoir.KindEnum, Ref: enum.Name},
-			},
-			{
-				Name: extFieldName(name),
-				Comment: "Set instead of " + name +
-					" when the value falls outside the enumeration above.",
-				Type:     protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarString},
-				Optional: true,
-			},
-		},
+	return propertyOutput{fields: []protoir.Field{{
+		Name:           fieldName(in.property),
+		Comment:        text(in.schema.Description),
+		Type:           protoir.FieldType{Kind: protoir.KindScalar, Scalar: protoir.ScalarString},
+		SourceForm:     openEnumForm(in.schema, values),
+		SourceRequired: in.required,
+		Optional:       !in.required,
+	}}}
+}
+
+// openEnumForm records the union the source declared: the closed vocabulary,
+// and the pattern that admits anything outside it.
+func openEnumForm(s *schemalib.Schema, values []string) *protoir.SourceForm {
+	branches := []protoir.SourceForm{{Type: "string", Enum: values}}
+	if pattern, found := extPattern(s); found {
+		branches = append(branches, protoir.SourceForm{Type: "string", Pattern: pattern})
 	}
+	return &protoir.SourceForm{Type: "string", AnyOf: branches}
 }
 
 // buildEnum names an enum and its members.
@@ -278,18 +311,25 @@ func (c *converter) buildEnum(in propertyInput, values []string) protoir.Enum {
 }
 
 // repeatedField builds the single-field output shared by every array rule.
+//
+// A required list is recorded like any other required property. The generated
+// documentation then marks it required, which is what the source said. Note
+// that a validator reading the same annotation at runtime treats an empty list
+// as unset, so it enforces non-empty where the source only demanded presence.
 func repeatedField(
 	name, comment string,
 	ft protoir.FieldType,
 	enums []protoir.Enum,
+	required bool,
 ) propertyOutput {
 	return propertyOutput{
 		enums: enums,
 		fields: []protoir.Field{{
-			Name:     name,
-			Comment:  comment,
-			Type:     ft,
-			Repeated: true,
+			Name:           name,
+			Comment:        comment,
+			Type:           ft,
+			SourceRequired: required,
+			Repeated:       true,
 		}},
 	}
 }

@@ -3,10 +3,12 @@ module github.com/StevenACoffman/protoschemer
 go 1.27.0
 
 require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/ettle/strcase v0.2.0
 	github.com/jhump/protoreflect/v2 v2.0.0-beta.2
 	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sudorandom/protoc-gen-connect-openapi v0.27.1
 	github.com/swaggest/jsonschema-go v0.3.79
 	google.golang.org/genproto v0.0.0-20260911204522-f61a6ca850bd
@@ -15,7 +17,6 @@ require (
 )
 
 require (
-	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2 // indirect
 	buf.build/go/protovalidate v1.4.0 // indirect
 	cel.dev/cel-go v0.32.0 // indirect
 	cel.dev/expr v0.25.3 // indirect
@@ -38,3 +39,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260904194346-d0f1323225a4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260904194346-d0f1323225a4 // indirect
 )
+
+replace github.com/sudorandom/protoc-gen-connect-openapi => github.com/StevenACoffman/protoc-gen-connect-openapi v0.0.0-20260912190720-3481e7ca1ce6

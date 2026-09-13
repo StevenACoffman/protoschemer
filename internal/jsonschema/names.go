@@ -78,6 +78,3 @@ func enumValueName(enum, value string) string {
 
 // enumZeroName is the name of the synthesized zero value.
 func enumZeroName(enum string) string { return strcase.ToSNAKE(enum) + unspecifiedSuffix }
-
-// extFieldName is the escape-hatch companion to an extensible enum field.
-func extFieldName(field string) string { return field + "_ext" }

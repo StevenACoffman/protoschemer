@@ -20,6 +20,19 @@ const (
 )
 
 // Fidelity classifies how much of an aspect survives a round trip.
+//
+// Two limits on how far a rating here can be read.
+//
+// It describes the schema round trip only. Several aspects reach Faithful
+// because protoschemer annotates the field with the shape its source declared,
+// and protobuf JSON serialization ignores those annotations entirely. A
+// Faithful rating says the generated document matches the source contract,
+// never that a protojson service emits that shape.
+//
+// It also describes a property's own schema, not what its parent says about it.
+// Requiredness lives on the parent, and the differential tests cover it
+// separately; a rating here is silent on whether a property survived as
+// required.
 type Fidelity int
 
 // Aspect is one JSON Schema construct under test.
@@ -38,9 +51,6 @@ type Aspect struct {
 	Fidelity Fidelity
 	// Loses explains the difference. Required when Fidelity is Lossy.
 	Loses string
-	// ExtraProperties are property names the round trip adds beyond the one
-	// named by the aspect, which only an open enumeration does.
-	ExtraProperties []string
 }
 
 func (f Fidelity) String() string {
@@ -124,52 +134,44 @@ func aspects() []Aspect {
 			Want:     isNullable("string"),
 		},
 		{
-			// Protobuf enum values must be identifiers unique within their
-			// package, so "active" becomes ORG_STATUS_ACTIVE, and protobuf
-			// requires a zero value that the source schema never had.
+			// Protobuf enum values must be prefixed identifiers, so the
+			// generated enum spells them ORG_STATUS_ACTIVE. The annotation
+			// restores the source vocabulary for the document.
 			Name:     "closed enum",
 			Property: `{"type":"string","enum":["active","tobedeleted"]}`,
 			Required: true,
-			Fidelity: Lossy,
-			Loses: "enum values are renamed to protobuf identifiers and a zero " +
-				"value is added; the original spellings are not recoverable",
-			Want: both(hasType("string"), hasEnumSuffixes("ACTIVE", "TOBEDELETED")),
+			Fidelity: Faithful,
+			Want:     both(hasType("string"), hasEnumValues("active", "tobedeleted")),
 		},
 		{
-			// protoschemer maps this to a real bool on purpose: a two-member
-			// string enum is how a schema spells a boolean for a binding that
-			// lacks one, and callers want `if x.Active`.
+			// The field is a real bool so generated Go reads `if x.Active`.
+			// The annotation restores the two strings the source declared.
 			Name:     "boolean-valued enum",
 			Property: `{"type":"string","enum":["true","false"]}`,
 			Required: true,
-			Fidelity: Lossy,
-			Loses: "becomes a JSON boolean rather than the strings \"true\" and " +
-				"\"false\"; chosen so generated Go exposes a bool",
-			Want: hasType("boolean"),
+			Fidelity: Faithful,
+			Want:     both(hasType("string"), hasEnumValues("true", "false")),
 		},
 		{
-			// google.type.Date is semantically right for a calendar date, but
-			// its JSON form is an object, not an ISO string.
+			// The field is a google.type.Date, whose protojson form is an
+			// object. The annotation restores the ISO string the source
+			// declared, so the document describes the source contract.
 			Name:     "format date",
 			Property: `{"type":"string","format":"date"}`,
 			Required: true,
-			Fidelity: Lossy,
-			Loses: `becomes {"year","month","day"} rather than "YYYY-MM-DD"; ` +
-				"chosen because google.type.Date models a calendar date exactly",
-			Want: both(hasType("object"), hasProperties("year", "month", "day")),
+			Fidelity: Faithful,
+			Want:     both(hasType("string"), hasKeyword("format", "date")),
 		},
 		{
-			// Protobuf has no open enumeration, so the vocabulary and the
-			// escape hatch become two fields. No value is lost, but the shape
-			// a consumer reads is different.
+			// Protobuf enums are closed, so modelling the vocabulary as one
+			// would need a second field for the escape hatch. A string keeps
+			// the property whole and the annotation carries both alternatives.
 			Name: "open enum",
 			Property: `{"anyOf":[{"type":"string","enum":["school","district"]},` +
 				`{"type":"string","pattern":"(ext:)[a-z]+"}]}`,
-			Required:        true,
-			Fidelity:        Lossy,
-			Loses:           "splits into a closed enum plus a companion <name>Ext string",
-			ExtraProperties: []string{"Ext"},
-			Want:            both(hasType("string"), hasEnumSuffixes("SCHOOL", "DISTRICT")),
+			Required: true,
+			Fidelity: Faithful,
+			Want:     hasAnyOfBranches([]string{"school", "district"}, "ext:"),
 		},
 	}
 }
